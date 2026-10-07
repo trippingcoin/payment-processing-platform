@@ -1,1 +1,0 @@
-# payment-processing-platform
