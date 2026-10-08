@@ -16,7 +16,15 @@ func (q *Queries) ReserveIdempotencyKey(ctx context.Context, record IdempotencyR
 			client_id, idempotency_key, request_hash, resource_type,
 			resource_id, expires_at
 		) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (client_id, idempotency_key) DO NOTHING`
+		ON CONFLICT (client_id, idempotency_key) DO UPDATE
+		SET request_hash = EXCLUDED.request_hash,
+		    resource_type = EXCLUDED.resource_type,
+		    resource_id = EXCLUDED.resource_id,
+		    response_status = NULL,
+		    response_body = NULL,
+		    created_at = now(),
+		    expires_at = EXCLUDED.expires_at
+		WHERE idempotency_keys.expires_at <= now()`
 
 	tag, err := q.db.Exec(ctx, statement,
 		record.ClientID,
