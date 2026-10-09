@@ -16,8 +16,13 @@ const defaultIdempotencyTTL = 24 * time.Hour
 // only sees persistence operations that it actually needs.
 type Repository interface {
 	GetAccount(context.Context, string) (repo.Account, error)
+	DebitAccount(context.Context, string, string, int64, int64) (repo.Account, error)
 	CreatePayment(context.Context, repo.Payment) (repo.Payment, error)
 	GetPayment(context.Context, string) (repo.Payment, error)
+	GetPaymentForUpdate(context.Context, string) (repo.Payment, error)
+	UpdatePaymentStatus(context.Context, string, repo.PaymentStatus, repo.PaymentStatus, int64, *string) (repo.Payment, error)
+	AppendLedgerEntry(context.Context, repo.LedgerEntry) (repo.LedgerEntry, error)
+	ListTransactions(context.Context, string, *repo.TransactionCursor, int) ([]repo.LedgerEntry, *repo.TransactionCursor, error)
 	ReserveIdempotencyKey(context.Context, repo.IdempotencyRecord) (bool, error)
 	GetIdempotencyKey(context.Context, string, string) (repo.IdempotencyRecord, error)
 	SaveIdempotencyResponse(context.Context, string, string, int, json.RawMessage) error

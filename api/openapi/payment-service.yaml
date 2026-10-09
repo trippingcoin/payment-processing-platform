@@ -1,0 +1,383 @@
+openapi: 3.1.0
+info:
+  title: Payment Service API
+  version: 1.0.0
+  description: API учебной платформы обработки платежей.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health/live:
+    get:
+      operationId: liveness
+      responses:
+        "200":
+          description: Процесс работает.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /health/ready:
+    get:
+      operationId: readiness
+      responses:
+        "200":
+          description: Сервис готов принимать запросы.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/payments:
+    post:
+      operationId: createPayment
+      summary: Создать платёж
+      parameters:
+        - $ref: "#/components/parameters/ClientID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/RequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequest"
+      responses:
+        "202":
+          description: Платёж надёжно принят в обработку.
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /v1/payments/{payment_id}:
+    get:
+      operationId: getPayment
+      summary: Получить платёж
+      parameters:
+        - $ref: "#/components/parameters/ClientID"
+        - $ref: "#/components/parameters/PaymentID"
+      responses:
+        "200":
+          description: Текущее состояние платежа.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/accounts/{account_id}:
+    get:
+      operationId: getAccount
+      summary: Получить баланс счёта
+      parameters:
+        - $ref: "#/components/parameters/ClientID"
+        - $ref: "#/components/parameters/AccountID"
+      responses:
+        "200":
+          description: Текущее состояние счёта.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/accounts/{account_id}/transactions:
+    get:
+      operationId: listTransactions
+      summary: Получить историю операций
+      parameters:
+        - $ref: "#/components/parameters/ClientID"
+        - $ref: "#/components/parameters/AccountID"
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Страница операций в порядке от новых к старым.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /internal/v1/payments/{payment_id}/process:
+    post:
+      operationId: processPayment
+      summary: Обработать pending/processing платёж
+      description: Временная точка входа для локального MVP; позднее вызывается Kafka consumer.
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+        - name: X-Internal-Token
+          in: header
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/RequestID"
+      responses:
+        "200":
+          description: Терминальное состояние платежа.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Неверный внутренний token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  parameters:
+    ClientID:
+      name: X-Client-ID
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    RequestID:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 128
+    PaymentID:
+      name: payment_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AccountID:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    CreatePaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [account_id, amount_minor, currency]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          examples: [KZT]
+        description:
+          type: string
+          maxLength: 500
+    Payment:
+      type: object
+      required: [id, client_id, account_id, amount_minor, currency, status, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        amount_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        failure_code:
+          type: [string, "null"]
+        description:
+          type: [string, "null"]
+        version:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PaymentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Payment"
+    Account:
+      type: object
+      required: [id, user_id, currency, available_balance, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+        available_balance:
+          type: integer
+          format: int64
+        version:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AccountResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Account"
+    Transaction:
+      type: object
+      required: [id, account_id, operation_id, entry_type, amount_minor, balance_after, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        payment_id:
+          type: [string, "null"]
+          format: uuid
+        refund_id:
+          type: [string, "null"]
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        entry_type:
+          type: string
+          enum: [debit, credit]
+        amount_minor:
+          type: integer
+          format: int64
+        balance_after:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    TransactionListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+        next_cursor:
+          type: [string, "null"]
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+  responses:
+    BadRequest:
+      description: Некорректный запрос.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Ресурс не найден или недоступен клиенту.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Конфликт идемпотентности или состояния.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnprocessableEntity:
+      description: Бизнес-валидация не пройдена.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Зависимость сервиса недоступна.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

@@ -11,6 +11,7 @@ var (
 	ErrAccountNotFound     = errors.New("payment service: account not found")
 	ErrCurrencyMismatch    = errors.New("payment service: account currency mismatch")
 	ErrIdempotencyConflict = errors.New("payment service: idempotency key reused with different request")
+	ErrProcessingConflict  = errors.New("payment service: processing conflict; retry later")
 )
 
 type ValidationError struct {

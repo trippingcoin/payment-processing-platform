@@ -1,0 +1,87 @@
+name: payment-processing-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-payments}
+      POSTGRES_USER: ${POSTGRES_USER:-payments}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payments}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./migrations/payment-service:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-payments}
+    volumes:
+      - ./deploy/docker-compose/seed.sql:/seed.sql:ro
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - postgres
+      - -U
+      - ${POSTGRES_USER:-payments}
+      - -d
+      - ${POSTGRES_DB:-payments}
+      - -f
+      - /seed.sql
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_PORT: 8080
+      APP_VERSION: ${APP_VERSION:-v0.1.0}
+      ENV: ${ENV:-development}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-development-token}
+      DB_DSN: postgres://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}?sslmode=disable
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MIN_IDLE_CONNS: ${DB_MIN_IDLE_CONNS:-2}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-30m}
+      DB_CONN_MAX_IDLE_TIME: ${DB_CONN_MAX_IDLE_TIME:-5m}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    init: true
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
