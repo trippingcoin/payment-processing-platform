@@ -5,11 +5,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+ARG SERVICE=payment-service
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/payment-service \
-    ./cmd/payment-service
+    ./cmd/${SERVICE}
 
 FROM alpine:3.22
 

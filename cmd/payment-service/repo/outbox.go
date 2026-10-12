@@ -116,3 +116,36 @@ func scanOutboxEvent(row pgx.Row) (OutboxEvent, error) {
 	)
 	return event, err
 }
+
+// LockNextOutboxEvent must run in a transaction. A locked or delayed predecessor
+// blocks later events for the same aggregate, but not unrelated aggregates.
+func (q *Queries) LockNextOutboxEvent(ctx context.Context) (OutboxEvent, error) {
+	const statement = `SELECT ` + outboxColumns + ` FROM outbox_events e
+		WHERE e.published_at IS NULL AND e.next_attempt_at <= now()
+		AND NOT EXISTS (
+			SELECT 1 FROM outbox_events previous
+			WHERE previous.aggregate_type = e.aggregate_type
+			  AND previous.aggregate_id = e.aggregate_id
+			  AND previous.published_at IS NULL
+			  AND previous.sequence_id < e.sequence_id
+		)
+		ORDER BY e.sequence_id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`
+	event, err := scanOutboxEvent(q.db.QueryRow(ctx, statement))
+	if err == pgx.ErrNoRows {
+		return OutboxEvent{}, ErrNotFound
+	}
+	return event, err
+}
+
+func (q *Queries) ScheduleOutboxRetry(ctx context.Context, id, reason string, next time.Time) error {
+	tag, err := q.db.Exec(ctx, `UPDATE outbox_events
+		SET attempts = attempts + 1, last_error = $2, next_attempt_at = $3
+		WHERE id = $1 AND published_at IS NULL`, id, reason, next)
+	if err != nil {
+		return fmt.Errorf("schedule outbox retry: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
