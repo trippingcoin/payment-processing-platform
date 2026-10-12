@@ -40,6 +40,91 @@ services:
         condition: service_healthy
     restart: "no"
 
+  fraud-kafka-init:
+    image: apache/kafka:3.9.1
+    entrypoint: /opt/kafka/bin/kafka-topics.sh
+    command: ["--bootstrap-server", "kafka:9092", "--create", "--if-not-exists", "--topic", "${KAFKA_FRAUD_TOPIC:-fraud.events.v1}", "--partitions", "3", "--replication-factor", "1", "--config", "min.insync.replicas=1"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
+  fraud-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${FRAUD_POSTGRES_DB:-fraud}
+      POSTGRES_USER: ${FRAUD_POSTGRES_USER:-fraud}
+      POSTGRES_PASSWORD: ${FRAUD_POSTGRES_PASSWORD:-fraud}
+    ports:
+      - "127.0.0.1:${FRAUD_POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - fraud-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  fraud-migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./migrations/fraud-service:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${FRAUD_POSTGRES_USER:-fraud}:${FRAUD_POSTGRES_PASSWORD:-fraud}@fraud-postgres:5432/${FRAUD_POSTGRES_DB:-fraud}?sslmode=disable
+      - up
+    depends_on:
+      fraud-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  fraud-service:
+    build:
+      context: .
+      args:
+        SERVICE: fraud-service
+    environment:
+      FRAUD_DB_DSN: postgres://${FRAUD_POSTGRES_USER:-fraud}:${FRAUD_POSTGRES_PASSWORD:-fraud}@fraud-postgres:5432/${FRAUD_POSTGRES_DB:-fraud}?sslmode=disable
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_PAYMENTS_TOPIC: ${KAFKA_PAYMENTS_TOPIC:-payments.events.v1}
+      FRAUD_CONSUMER_GROUP: ${FRAUD_CONSUMER_GROUP:-fraud-service-v1}
+      FRAUD_MAX_AMOUNT_MINOR: ${FRAUD_MAX_AMOUNT_MINOR:-1000000}
+      FRAUD_CURRENCY: ${FRAUD_CURRENCY:-KZT}
+      FRAUD_PROCESS_TIMEOUT: ${FRAUD_PROCESS_TIMEOUT:-10s}
+    depends_on:
+      fraud-migrate:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  fraud-outbox-worker:
+    build:
+      context: .
+      args:
+        SERVICE: outbox-worker
+    environment:
+      DB_DSN: postgres://${FRAUD_POSTGRES_USER:-fraud}:${FRAUD_POSTGRES_PASSWORD:-fraud}@fraud-postgres:5432/${FRAUD_POSTGRES_DB:-fraud}?sslmode=disable
+      DB_MAX_OPEN_CONNS: 5
+      DB_MIN_IDLE_CONNS: 1
+      KAFKA_BROKERS: kafka:9092
+      OUTBOX_TOPIC: ${KAFKA_FRAUD_TOPIC:-fraud.events.v1}
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-1s}
+      OUTBOX_PUBLISH_TIMEOUT: ${OUTBOX_PUBLISH_TIMEOUT:-5s}
+      OUTBOX_RETRY_BASE: ${OUTBOX_RETRY_BASE:-1s}
+      OUTBOX_RETRY_MAX: ${OUTBOX_RETRY_MAX:-1m}
+    depends_on:
+      fraud-migrate:
+        condition: service_completed_successfully
+      fraud-kafka-init:
+        condition: service_completed_successfully
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+
   outbox-worker:
     build:
       context: .
@@ -149,3 +234,4 @@ services:
 volumes:
   postgres-data:
   kafka-data:
+  fraud-postgres-data:

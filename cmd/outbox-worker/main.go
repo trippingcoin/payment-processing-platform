@@ -25,12 +25,16 @@ func main() {
 func run() error {
 	var cfg struct {
 		config.Config
-		Outbox  outbox.Config
-		Brokers []string `env:"KAFKA_BROKERS" envDefault:"localhost:19092" envSeparator:","`
-		Topic   string   `env:"KAFKA_PAYMENTS_TOPIC" envDefault:"payments.events.v1"`
+		Outbox      outbox.Config
+		Brokers     []string `env:"KAFKA_BROKERS" envDefault:"localhost:19092" envSeparator:","`
+		Topic       string   `env:"KAFKA_PAYMENTS_TOPIC" envDefault:"payments.events.v1"`
+		OutputTopic string   `env:"OUTBOX_TOPIC"`
 	}
 	if err := env.Load(&cfg); err != nil {
 		return err
+	}
+	if cfg.OutputTopic != "" {
+		cfg.Topic = cfg.OutputTopic
 	}
 
 	if len(cfg.Brokers) == 0 || strings.TrimSpace(cfg.Topic) == "" {
