@@ -26,6 +26,7 @@ func main() {
 func run() error {
 	var cfg struct {
 		Rules   fraud.Rules
+		Retry   eventconsumer.RetryConfig
 		DSN     string        `env:"FRAUD_DB_DSN" envDefault:"postgres://fraud:fraud@localhost:55433/fraud?sslmode=disable"`
 		Brokers []string      `env:"KAFKA_BROKERS" envDefault:"localhost:19092" envSeparator:","`
 		Topic   string        `env:"KAFKA_PAYMENTS_TOPIC" envDefault:"payments.events.v1"`
@@ -33,6 +34,9 @@ func run() error {
 		Timeout time.Duration `env:"FRAUD_PROCESS_TIMEOUT" envDefault:"10s"`
 	}
 	if err := env.Load(&cfg); err != nil {
+		return err
+	}
+	if err := cfg.Retry.Validate(); err != nil {
 		return err
 	}
 	if len(cfg.Brokers) == 0 || strings.TrimSpace(cfg.Topic) == "" || strings.TrimSpace(cfg.Group) == "" || cfg.Timeout <= 0 {
@@ -64,7 +68,7 @@ func run() error {
 		StartOffset: kafka.FirstOffset, CommitInterval: 0, MinBytes: 1, MaxBytes: 10e6, MaxWait: time.Second})
 	defer reader.Close()
 	log.Info().Str("topic", cfg.Topic).Str("group", cfg.Group).Msg("fraud service started")
-	err = fraud.Consume(ctx, reader, service, cfg.Timeout)
+	err = eventconsumer.ConsumeWithRetry(ctx, reader, service, cfg.Timeout, cfg.Retry)
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return nil
 	}

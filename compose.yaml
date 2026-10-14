@@ -92,6 +92,9 @@ services:
       FRAUD_MAX_AMOUNT_MINOR: ${FRAUD_MAX_AMOUNT_MINOR:-1000000}
       FRAUD_CURRENCY: ${FRAUD_CURRENCY:-KZT}
       FRAUD_PROCESS_TIMEOUT: ${FRAUD_PROCESS_TIMEOUT:-10s}
+      CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
+      CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
+      CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
     depends_on:
       fraud-migrate:
         condition: service_completed_successfully
@@ -138,6 +141,9 @@ services:
       KAFKA_FRAUD_TOPIC: ${KAFKA_FRAUD_TOPIC:-fraud.events.v1}
       PAYMENT_CONSUMER_GROUP: ${PAYMENT_CONSUMER_GROUP:-payment-fraud-decisions-v1}
       PAYMENT_CONSUMER_TIMEOUT: ${PAYMENT_CONSUMER_TIMEOUT:-10s}
+      CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
+      CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
+      CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
     depends_on:
       migrate:
         condition: service_completed_successfully
