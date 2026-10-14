@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -35,6 +36,25 @@ func ConsumeWithRetry(ctx context.Context, reader Reader, handler Handler, timeo
 }
 
 func consume(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry retryRunner) error {
+	return consumeWithDLQ(ctx, reader, handler, timeout, retry, nil)
+}
+
+// ConsumeWithDLQ quarantines permanent or exhausted transient handler failures.
+// No source commit is attempted until the DLQ publisher acknowledges the write.
+func ConsumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry RetryConfig, sink DeadLetterSink) error {
+	if timeout <= 0 {
+		return fmt.Errorf("consumer timeout must be positive")
+	}
+	if err := retry.Validate(); err != nil {
+		return err
+	}
+	if err := sink.validate(); err != nil {
+		return err
+	}
+	return consumeWithDLQ(ctx, reader, handler, timeout, newRetryRunner(retry), &sink)
+}
+
+func consumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry retryRunner, sink *DeadLetterSink) error {
 	for {
 		var message kafka.Message
 		// Fetch can wait indefinitely on an idle topic. Only actual errors consume
@@ -53,7 +73,20 @@ func consume(ctx context.Context, reader Reader, handler Handler, timeout time.D
 			return handler.Handle(processCtx, message)
 		})
 		if err != nil {
-			return err
+			if sink == nil || !deadLetterEligible(err) {
+				return err
+			}
+			handleErr := err
+			letter := newDeadLetter(sink.ConsumerGroup, message, handleErr)
+			err = retry.run(ctx, "dlq", message, func(ctx context.Context) error {
+				publishCtx, cancel := context.WithTimeout(ctx, sink.Timeout)
+				defer cancel()
+				return sink.Publisher.PublishDeadLetter(publishCtx, letter)
+			})
+			if err != nil {
+				return err
+			}
+			log.Warn().Fields(ErrorFields(handleErr)).Str("dlq_id", letter.ID).Msg("event acknowledged by DLQ; committing source offset")
 		}
 		err = retry.run(ctx, "commit", message, func(ctx context.Context) error {
 			commitCtx, cancel := context.WithTimeout(ctx, timeout)

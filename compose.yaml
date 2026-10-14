@@ -49,6 +49,24 @@ services:
         condition: service_healthy
     restart: "no"
 
+  fraud-dlq-init:
+    image: apache/kafka:3.9.1
+    entrypoint: /opt/kafka/bin/kafka-topics.sh
+    command: ["--bootstrap-server", "kafka:9092", "--create", "--if-not-exists", "--topic", "${FRAUD_DLQ_TOPIC:-fraud-service.dlq.v1}", "--partitions", "3", "--replication-factor", "1", "--config", "min.insync.replicas=1", "--config", "retention.ms=604800000", "--config", "max.message.bytes=20971520"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
+  payment-dlq-init:
+    image: apache/kafka:3.9.1
+    entrypoint: /opt/kafka/bin/kafka-topics.sh
+    command: ["--bootstrap-server", "kafka:9092", "--create", "--if-not-exists", "--topic", "${PAYMENT_DLQ_TOPIC:-payment-consumer.dlq.v1}", "--partitions", "3", "--replication-factor", "1", "--config", "min.insync.replicas=1", "--config", "retention.ms=604800000", "--config", "max.message.bytes=20971520"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
   fraud-postgres:
     image: postgres:16-alpine
     environment:
@@ -92,6 +110,8 @@ services:
       FRAUD_MAX_AMOUNT_MINOR: ${FRAUD_MAX_AMOUNT_MINOR:-1000000}
       FRAUD_CURRENCY: ${FRAUD_CURRENCY:-KZT}
       FRAUD_PROCESS_TIMEOUT: ${FRAUD_PROCESS_TIMEOUT:-10s}
+      FRAUD_DLQ_TOPIC: ${FRAUD_DLQ_TOPIC:-fraud-service.dlq.v1}
+      CONSUMER_DLQ_TIMEOUT: ${CONSUMER_DLQ_TIMEOUT:-5s}
       CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
       CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
       CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
@@ -99,6 +119,8 @@ services:
       fraud-migrate:
         condition: service_completed_successfully
       kafka-init:
+        condition: service_completed_successfully
+      fraud-dlq-init:
         condition: service_completed_successfully
     init: true
     stop_grace_period: 20s
@@ -141,6 +163,8 @@ services:
       KAFKA_FRAUD_TOPIC: ${KAFKA_FRAUD_TOPIC:-fraud.events.v1}
       PAYMENT_CONSUMER_GROUP: ${PAYMENT_CONSUMER_GROUP:-payment-fraud-decisions-v1}
       PAYMENT_CONSUMER_TIMEOUT: ${PAYMENT_CONSUMER_TIMEOUT:-10s}
+      PAYMENT_DLQ_TOPIC: ${PAYMENT_DLQ_TOPIC:-payment-consumer.dlq.v1}
+      CONSUMER_DLQ_TIMEOUT: ${CONSUMER_DLQ_TIMEOUT:-5s}
       CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
       CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
       CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
@@ -148,6 +172,8 @@ services:
       migrate:
         condition: service_completed_successfully
       fraud-kafka-init:
+        condition: service_completed_successfully
+      payment-dlq-init:
         condition: service_completed_successfully
     init: true
     stop_grace_period: 20s

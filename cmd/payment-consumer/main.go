@@ -28,11 +28,13 @@ func main() {
 func run() error {
 	var cfg struct {
 		config.Config
-		Retry   eventconsumer.RetryConfig
-		Brokers []string      `env:"KAFKA_BROKERS" envDefault:"localhost:19092" envSeparator:","`
-		Topic   string        `env:"KAFKA_FRAUD_TOPIC" envDefault:"fraud.events.v1"`
-		Group   string        `env:"PAYMENT_CONSUMER_GROUP" envDefault:"payment-fraud-decisions-v1"`
-		Timeout time.Duration `env:"PAYMENT_CONSUMER_TIMEOUT" envDefault:"10s"`
+		Retry      eventconsumer.RetryConfig
+		DLQTopic   string        `env:"PAYMENT_DLQ_TOPIC" envDefault:"payment-consumer.dlq.v1"`
+		DLQTimeout time.Duration `env:"CONSUMER_DLQ_TIMEOUT" envDefault:"5s"`
+		Brokers    []string      `env:"KAFKA_BROKERS" envDefault:"localhost:19092" envSeparator:","`
+		Topic      string        `env:"KAFKA_FRAUD_TOPIC" envDefault:"fraud.events.v1"`
+		Group      string        `env:"PAYMENT_CONSUMER_GROUP" envDefault:"payment-fraud-decisions-v1"`
+		Timeout    time.Duration `env:"PAYMENT_CONSUMER_TIMEOUT" envDefault:"10s"`
 	}
 	if err := env.Load(&cfg); err != nil {
 		return err
@@ -50,6 +52,11 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	dlq, err := eventconsumer.NewKafkaDeadLetterPublisher(cfg.Brokers, cfg.Topic, cfg.DLQTopic, cfg.DLQTimeout)
+	if err != nil {
+		return err
+	}
+	defer dlq.Close()
 	store, err := repo.Open(ctx, cfg.Config)
 	if err != nil {
 		return err
@@ -59,7 +66,7 @@ func run() error {
 		StartOffset: kafka.FirstOffset, CommitInterval: 0, MinBytes: 1, MaxBytes: 10e6, MaxWait: time.Second})
 	defer reader.Close()
 	log.Info().Str("topic", cfg.Topic).Str("group", cfg.Group).Msg("payment consumer started")
-	err = eventconsumer.ConsumeWithRetry(ctx, reader, paymentconsumer.Handler{Payments: service.New(store)}, cfg.Timeout, cfg.Retry)
+	err = eventconsumer.ConsumeWithDLQ(ctx, reader, paymentconsumer.Handler{Payments: service.New(store)}, cfg.Timeout, cfg.Retry, eventconsumer.DeadLetterSink{Publisher: dlq, ConsumerGroup: cfg.Group, Timeout: cfg.DLQTimeout})
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return nil
 	}
