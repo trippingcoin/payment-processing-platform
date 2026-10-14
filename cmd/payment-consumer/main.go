@@ -21,7 +21,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal().Err(err).Msg("payment consumer stopped; offset not acknowledged")
+		log.Fatal().Fields(eventconsumer.ErrorFields(err)).Err(err).Msg("payment consumer stopped; offset not acknowledged")
 	}
 }
 

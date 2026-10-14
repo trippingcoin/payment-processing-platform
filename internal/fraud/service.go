@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"triple-p/internal/eventerror"
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
@@ -67,30 +68,30 @@ func validCurrency(s string) bool {
 func (s *Service) Handle(ctx context.Context, message kafka.Message) error {
 	var event outbox.Envelope
 	if err := json.Unmarshal(message.Value, &event); err != nil {
-		return fmt.Errorf("invalid event JSON: %w", err)
+		return eventerror.Mark(eventerror.Permanent, "invalid_json", fmt.Errorf("invalid event JSON: %w", err))
 	}
 	if event.EventType == "" {
-		return fmt.Errorf("missing event_type")
+		return eventerror.Mark(eventerror.Permanent, "invalid_envelope", fmt.Errorf("missing event_type"))
 	}
 	// Other lifecycle events share the payment topic and require no fraud check.
 	if event.EventType != "payment.created" {
 		return nil
 	}
 	if event.SchemaVersion != 1 || event.OccurredAt.IsZero() || len(event.CorrelationID) > 128 {
-		return fmt.Errorf("invalid payment.created envelope")
+		return eventerror.Mark(eventerror.Permanent, "invalid_envelope", fmt.Errorf("invalid payment.created envelope"))
 	}
 	var payment Payment
 	if err := json.Unmarshal(event.Payload, &payment); err != nil {
-		return fmt.Errorf("invalid payment payload: %w", err)
+		return eventerror.Mark(eventerror.Permanent, "invalid_payload", fmt.Errorf("invalid payment payload: %w", err))
 	}
 	for _, id := range []string{event.EventID, payment.PaymentID, payment.ClientID, payment.AccountID} {
 		parsed, err := uuid.Parse(id)
 		if err != nil || parsed == uuid.Nil || parsed.String() != id {
-			return fmt.Errorf("event identifiers must be canonical nonzero UUIDs")
+			return eventerror.Mark(eventerror.Permanent, "invalid_identifier", fmt.Errorf("event identifiers must be canonical nonzero UUIDs"))
 		}
 	}
 	if event.AggregateID != payment.PaymentID || string(message.Key) != payment.PaymentID || payment.Amount <= 0 || !validCurrency(payment.Currency) {
-		return fmt.Errorf("invalid payment.created fields or partition key")
+		return eventerror.Mark(eventerror.Permanent, "invalid_payment", fmt.Errorf("invalid payment.created fields or partition key"))
 	}
 	decision := Decision{Payment: payment, SourceEventID: event.EventID, Status: "approved", Reason: "within_limit",
 		RuleVersion: "amount-limit-v1", MaxAmount: s.rules.MaxAmount, RuleCurrency: s.rules.Currency, DecidedAt: time.Now().UTC()}

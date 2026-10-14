@@ -26,19 +26,19 @@ func Consume(ctx context.Context, reader Reader, handler Handler, timeout time.D
 	for {
 		message, err := reader.FetchMessage(ctx)
 		if err != nil {
-			return fmt.Errorf("fetch event: %w", err)
+			return &Failure{Stage: "fetch", Cause: err}
 		}
 		processCtx, cancel := context.WithTimeout(ctx, timeout)
 		err = handler.Handle(processCtx, message)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("handle partition %d offset %d: %w", message.Partition, message.Offset, err)
+			return &Failure{Stage: "handle", Topic: message.Topic, Partition: message.Partition, Offset: message.Offset, Cause: err}
 		}
 		commitCtx, cancel := context.WithTimeout(ctx, timeout)
 		err = reader.CommitMessages(commitCtx, message)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("commit event offset: %w", err)
+			return &Failure{Stage: "commit", Topic: message.Topic, Partition: message.Partition, Offset: message.Offset, Cause: err}
 		}
 	}
 }

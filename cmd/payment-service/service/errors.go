@@ -6,12 +6,15 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("payment service: invalid argument")
-	ErrPaymentNotFound     = errors.New("payment service: payment not found")
-	ErrAccountNotFound     = errors.New("payment service: account not found")
-	ErrCurrencyMismatch    = errors.New("payment service: account currency mismatch")
-	ErrIdempotencyConflict = errors.New("payment service: idempotency key reused with different request")
-	ErrProcessingConflict  = errors.New("payment service: processing conflict; retry later")
+	ErrInvalidArgument       = errors.New("payment service: invalid argument")
+	ErrPaymentNotFound       = errors.New("payment service: payment not found")
+	ErrAccountNotFound       = errors.New("payment service: account not found")
+	ErrCurrencyMismatch      = errors.New("payment service: account currency mismatch")
+	ErrIdempotencyConflict   = errors.New("payment service: idempotency key reused with different request")
+	ErrProcessingConflict    = errors.New("payment service: processing conflict; retry later")
+	ErrInvalidFraudDecision  = errors.New("payment service: invalid fraud decision")
+	ErrFraudDecisionMismatch = errors.New("payment service: fraud decision does not match payment")
+	ErrUnknownFraudSource    = errors.New("payment service: unknown payment.created source")
 )
 
 type ValidationError struct {

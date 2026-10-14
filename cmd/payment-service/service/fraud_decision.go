@@ -21,12 +21,12 @@ func (s *Service) ApplyFraudDecision(ctx context.Context, c FraudDecisionCommand
 	for _, id := range []string{c.EventID, c.SourceEventID, c.PaymentID, c.ClientID, c.AccountID} {
 		u, err := uuid.Parse(id)
 		if err != nil || u == uuid.Nil || u.String() != id {
-			return fmt.Errorf("invalid fraud decision identifier")
+			return fmt.Errorf("invalid fraud decision identifier: %w", ErrInvalidFraudDecision)
 		}
 	}
 	if c.Amount <= 0 || len(c.Currency) != 3 || !isUpperASCII(c.Currency) ||
 		(c.Status != "approved" && c.Status != "declined") || c.Reason == "" || len(c.Reason) > 128 || len(c.CorrelationID) > 128 {
-		return fmt.Errorf("invalid fraud decision fields")
+		return fmt.Errorf("invalid fraud decision fields: %w", ErrInvalidFraudDecision)
 	}
 	if c.CorrelationID == "" {
 		c.CorrelationID = c.PaymentID
@@ -45,14 +45,14 @@ func (s *Service) ApplyFraudDecision(ctx context.Context, c FraudDecisionCommand
 				return err
 			}
 			if p.ClientID != c.ClientID || p.AccountID != c.AccountID || p.Amount != c.Amount || p.Currency != c.Currency {
-				return fmt.Errorf("fraud decision does not match payment %s", p.ID)
+				return fmt.Errorf("payment %s: %w", p.ID, ErrFraudDecisionMismatch)
 			}
 			known, err := r.IsPaymentCreatedEvent(ctx, c.SourceEventID, p.ID)
 			if err != nil {
 				return err
 			}
 			if !known {
-				return fmt.Errorf("unknown payment.created source for payment %s", p.ID)
+				return fmt.Errorf("payment %s: %w", p.ID, ErrUnknownFraudSource)
 			}
 			if p.Status == repo.PaymentCompleted || p.Status == repo.PaymentFailed {
 				return nil

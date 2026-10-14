@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/kafka-go"
+	"triple-p/internal/eventconsumer"
 	"triple-p/internal/fraud"
 	"triple-p/utils/env"
 )
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal().Err(err).Msg("fraud service stopped; offset not acknowledged")
+		log.Fatal().Fields(eventconsumer.ErrorFields(err)).Err(err).Msg("fraud service stopped; offset not acknowledged")
 	}
 }
 

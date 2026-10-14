@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"triple-p/internal/eventerror"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -54,7 +55,7 @@ func (s *PostgresStore) Record(ctx context.Context, d Decision, headers map[stri
 			return err
 		}
 		if !same {
-			return fmt.Errorf("conflicting payload for payment %s", d.PaymentID)
+			return eventerror.Mark(eventerror.Permanent, "decision_mismatch", fmt.Errorf("conflicting payload for payment %s", d.PaymentID))
 		}
 		return tx.Commit(ctx)
 	}
