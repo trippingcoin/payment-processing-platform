@@ -125,6 +125,28 @@ services:
     stop_grace_period: 20s
     restart: unless-stopped
 
+  payment-consumer:
+    build:
+      context: .
+      args:
+        SERVICE: payment-consumer
+    environment:
+      DB_DSN: postgres://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}?sslmode=disable
+      DB_MAX_OPEN_CONNS: 5
+      DB_MIN_IDLE_CONNS: 1
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_FRAUD_TOPIC: ${KAFKA_FRAUD_TOPIC:-fraud.events.v1}
+      PAYMENT_CONSUMER_GROUP: ${PAYMENT_CONSUMER_GROUP:-payment-fraud-decisions-v1}
+      PAYMENT_CONSUMER_TIMEOUT: ${PAYMENT_CONSUMER_TIMEOUT:-10s}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      fraud-kafka-init:
+        condition: service_completed_successfully
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+
   outbox-worker:
     build:
       context: .

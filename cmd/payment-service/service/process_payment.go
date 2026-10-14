@@ -118,79 +118,82 @@ func (s *Service) completePaymentProcessing(
 		if err != nil {
 			return fmt.Errorf("lock processing payment: %w", err)
 		}
-		if payment.Status == repo.PaymentCompleted || payment.Status == repo.PaymentFailed {
-			result = payment
-			return nil
-		}
-		if payment.Status != repo.PaymentProcessing {
-			return fmt.Errorf("payment is %q, expected processing: %w", payment.Status, repo.ErrInvalidState)
-		}
+		result, err = s.finishPayment(ctx, repository, payment, command.CorrelationID)
+		return err
+	})
+	return result, err
+}
 
-		account, err := repository.GetAccount(ctx, payment.AccountID)
-		if err != nil {
-			return fmt.Errorf("load debit account: %w", err)
-		}
-		debited, err := repository.DebitAccount(
-			ctx,
-			account.ID,
-			payment.Currency,
-			payment.Amount,
-			account.Version,
-		)
-		if errors.Is(err, repo.ErrInsufficientFunds) {
-			failureCode := failureInsufficientFunds
-			failed, updateErr := repository.UpdatePaymentStatus(
-				ctx,
-				payment.ID,
-				repo.PaymentProcessing,
-				repo.PaymentFailed,
-				payment.Version,
-				&failureCode,
-			)
-			if updateErr != nil {
-				return fmt.Errorf("fail payment: %w", updateErr)
-			}
-			if eventErr := s.appendPaymentStatusEvent(ctx, repository, failed, command.CorrelationID); eventErr != nil {
-				return eventErr
-			}
-			result = failed
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("debit account: %w", err)
-		}
+// finishPayment runs inside the caller transaction while the payment row is locked.
+func (s *Service) finishPayment(ctx context.Context, repository Repository, payment repo.Payment, correlationID string) (repo.Payment, error) {
+	if payment.Status == repo.PaymentCompleted || payment.Status == repo.PaymentFailed {
+		return payment, nil
+	}
+	if payment.Status != repo.PaymentProcessing {
+		return repo.Payment{}, fmt.Errorf("payment is %q, expected processing: %w", payment.Status, repo.ErrInvalidState)
+	}
 
-		paymentID := payment.ID
-		if _, err := repository.AppendLedgerEntry(ctx, repo.LedgerEntry{
-			ID:           s.newID(),
-			AccountID:    account.ID,
-			PaymentID:    &paymentID,
-			OperationID:  payment.ID,
-			EntryType:    repo.LedgerDebit,
-			Amount:       payment.Amount,
-			BalanceAfter: debited.AvailableBalance,
-		}); err != nil {
-			return fmt.Errorf("append debit ledger entry: %w", err)
-		}
-
-		completed, err := repository.UpdatePaymentStatus(
+	account, err := repository.GetAccount(ctx, payment.AccountID)
+	if err != nil {
+		return repo.Payment{}, fmt.Errorf("load debit account: %w", err)
+	}
+	debited, err := repository.DebitAccount(
+		ctx,
+		account.ID,
+		payment.Currency,
+		payment.Amount,
+		account.Version,
+	)
+	if errors.Is(err, repo.ErrInsufficientFunds) {
+		failureCode := failureInsufficientFunds
+		failed, updateErr := repository.UpdatePaymentStatus(
 			ctx,
 			payment.ID,
 			repo.PaymentProcessing,
-			repo.PaymentCompleted,
+			repo.PaymentFailed,
 			payment.Version,
-			nil,
+			&failureCode,
 		)
-		if err != nil {
-			return fmt.Errorf("complete payment: %w", err)
+		if updateErr != nil {
+			return repo.Payment{}, fmt.Errorf("fail payment: %w", updateErr)
 		}
-		if err := s.appendPaymentStatusEvent(ctx, repository, completed, command.CorrelationID); err != nil {
-			return err
+		if eventErr := s.appendPaymentStatusEvent(ctx, repository, failed, correlationID); eventErr != nil {
+			return repo.Payment{}, eventErr
 		}
-		result = completed
-		return nil
-	})
-	return result, err
+		return failed, nil
+	}
+	if err != nil {
+		return repo.Payment{}, fmt.Errorf("debit account: %w", err)
+	}
+
+	paymentID := payment.ID
+	if _, err := repository.AppendLedgerEntry(ctx, repo.LedgerEntry{
+		ID:           s.newID(),
+		AccountID:    account.ID,
+		PaymentID:    &paymentID,
+		OperationID:  payment.ID,
+		EntryType:    repo.LedgerDebit,
+		Amount:       payment.Amount,
+		BalanceAfter: debited.AvailableBalance,
+	}); err != nil {
+		return repo.Payment{}, fmt.Errorf("append debit ledger entry: %w", err)
+	}
+
+	completed, err := repository.UpdatePaymentStatus(
+		ctx,
+		payment.ID,
+		repo.PaymentProcessing,
+		repo.PaymentCompleted,
+		payment.Version,
+		nil,
+	)
+	if err != nil {
+		return repo.Payment{}, fmt.Errorf("complete payment: %w", err)
+	}
+	if err := s.appendPaymentStatusEvent(ctx, repository, completed, correlationID); err != nil {
+		return repo.Payment{}, err
+	}
+	return completed, nil
 }
 
 func (s *Service) appendPaymentStatusEvent(

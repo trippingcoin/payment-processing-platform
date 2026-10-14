@@ -15,6 +15,8 @@ const defaultIdempotencyTTL = 24 * time.Hour
 // Repository is intentionally narrower than repo.Queries. The use-case layer
 // only sees persistence operations that it actually needs.
 type Repository interface {
+	TryBeginInboxEvent(context.Context, string, string, time.Time) (bool, error)
+	IsPaymentCreatedEvent(context.Context, string, string) (bool, error)
 	GetAccount(context.Context, string) (repo.Account, error)
 	DebitAccount(context.Context, string, string, int64, int64) (repo.Account, error)
 	CreatePayment(context.Context, repo.Payment) (repo.Payment, error)

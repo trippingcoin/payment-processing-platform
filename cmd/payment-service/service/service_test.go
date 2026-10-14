@@ -282,6 +282,8 @@ func (transactor fakeTransactor) WithinTransaction(_ context.Context, fn func(Re
 }
 
 type fakeRepository struct {
+	inbox             map[string]bool
+	ledger            map[string]repo.LedgerEntry
 	accounts          map[string]repo.Account
 	payments          map[string]repo.Payment
 	idempotency       map[string]repo.IdempotencyRecord
@@ -291,6 +293,8 @@ type fakeRepository struct {
 
 func newFakeRepository() *fakeRepository {
 	return &fakeRepository{
+		inbox:       make(map[string]bool),
+		ledger:      make(map[string]repo.LedgerEntry),
 		accounts:    make(map[string]repo.Account),
 		payments:    make(map[string]repo.Payment),
 		idempotency: make(map[string]repo.IdempotencyRecord),
@@ -300,6 +304,12 @@ func newFakeRepository() *fakeRepository {
 
 func (repository *fakeRepository) clone() *fakeRepository {
 	cloned := newFakeRepository()
+	for k, v := range repository.inbox {
+		cloned.inbox[k] = v
+	}
+	for k, v := range repository.ledger {
+		cloned.ledger[k] = v
+	}
 	cloned.appendOutboxError = repository.appendOutboxError
 	for key, value := range repository.accounts {
 		cloned.accounts[key] = value
@@ -319,6 +329,8 @@ func (repository *fakeRepository) clone() *fakeRepository {
 }
 
 func (repository *fakeRepository) replaceWith(updated *fakeRepository) {
+	repository.inbox = updated.inbox
+	repository.ledger = updated.ledger
 	repository.accounts = updated.accounts
 	repository.payments = updated.payments
 	repository.idempotency = updated.idempotency
