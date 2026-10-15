@@ -1,8 +1,12 @@
 package config
 
-import "time"
+import (
+	"time"
+	"triple-p/internal/telemetry"
+)
 
 type Config struct {
+	Metrics         telemetry.Config
 	Version         string        `env:"APP_VERSION" envDefault:"v0.0.1"`
 	Port            int           `env:"APP_PORT" envDefault:"8080"`
 	Env             string        `env:"ENV" envDefault:"development"`

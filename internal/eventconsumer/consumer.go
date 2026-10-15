@@ -41,7 +41,7 @@ func consume(ctx context.Context, reader Reader, handler Handler, timeout time.D
 
 // ConsumeWithDLQ quarantines permanent or exhausted transient handler failures.
 // No source commit is attempted until the DLQ publisher acknowledges the write.
-func ConsumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry RetryConfig, sink DeadLetterSink) error {
+func ConsumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry RetryConfig, sink DeadLetterSink, observers ...Observer) error {
 	if timeout <= 0 {
 		return fmt.Errorf("consumer timeout must be positive")
 	}
@@ -51,7 +51,11 @@ func ConsumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout
 	if err := sink.validate(); err != nil {
 		return err
 	}
-	return consumeWithDLQ(ctx, reader, handler, timeout, newRetryRunner(retry), &sink)
+	runner := newRetryRunner(retry)
+	if len(observers) > 0 {
+		runner.observer = observers[0]
+	}
+	return consumeWithDLQ(ctx, reader, handler, timeout, runner, &sink)
 }
 
 func consumeWithDLQ(ctx context.Context, reader Reader, handler Handler, timeout time.Duration, retry retryRunner, sink *DeadLetterSink) error {

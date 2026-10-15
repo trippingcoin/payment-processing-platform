@@ -11,6 +11,7 @@ import (
 	"triple-p/cmd/payment-service/repo"
 	"triple-p/config"
 	"triple-p/internal/outbox"
+	"triple-p/internal/telemetry"
 	"triple-p/utils/env"
 
 	"github.com/rs/zerolog/log"
@@ -55,13 +56,15 @@ func run() error {
 	defer store.Close()
 	publisher := outbox.NewKafkaPublisher(cfg.Brokers, cfg.Topic, cfg.Outbox.PublishTimeout)
 	defer publisher.Close()
-	worker, err := outbox.New(outbox.PostgresTransactions(store), publisher, cfg.Outbox)
+	metrics := telemetry.New()
+	metrics.RegisterOutbox(store.OutboxStats)
+	worker, err := outbox.New(outbox.PostgresTransactions(store), publisher, cfg.Outbox, metrics)
 	if err != nil {
 		return err
 	}
 	log.Info().Str("topic", cfg.Topic).Msg("outbox worker started")
-	err = worker.Run(ctx)
-	if errors.Is(err, context.Canceled) {
+	err = telemetry.Serve(ctx, cfg.Metrics.Addr, metrics.Handler(), worker.Run)
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return nil
 	}
 	return err

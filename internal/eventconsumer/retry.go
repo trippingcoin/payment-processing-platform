@@ -57,9 +57,14 @@ func waitRetry(ctx context.Context, delay time.Duration) error {
 }
 
 type retryRunner struct {
-	config RetryConfig
-	wait   func(context.Context, time.Duration) error
-	random func(int64) int64
+	config   RetryConfig
+	wait     func(context.Context, time.Duration) error
+	random   func(int64) int64
+	observer Observer
+}
+
+type Observer interface {
+	ConsumerAttempt(stage string, err error, duration time.Duration, retry bool)
 }
 
 func newRetryRunner(config RetryConfig) retryRunner {
@@ -74,7 +79,11 @@ func (r retryRunner) run(ctx context.Context, stage string, message kafka.Messag
 			return failure
 		}
 		failure.Attempts++
+		started := time.Now()
 		err := call(ctx)
+		if r.observer != nil {
+			r.observer.ConsumerAttempt(stage, err, time.Since(started), failure.Attempts > 1)
+		}
 		if err == nil {
 			return nil
 		}

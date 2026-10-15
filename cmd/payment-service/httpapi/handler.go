@@ -13,6 +13,7 @@ import (
 	"time"
 	"triple-p/cmd/payment-service/repo"
 	"triple-p/cmd/payment-service/service"
+	"triple-p/internal/telemetry"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -37,6 +38,14 @@ type Handler struct {
 	readiness     ReadinessChecker
 	internalToken string
 	mux           *http.ServeMux
+	metrics       *telemetry.Metrics
+	routePatterns map[string]struct{}
+}
+
+// WithMetrics must be called before serving requests.
+func (h *Handler) WithMetrics(metrics *telemetry.Metrics) *Handler {
+	h.metrics = metrics
+	return h
 }
 
 func New(service PaymentService, readiness ReadinessChecker, internalToken string) *Handler {
@@ -45,6 +54,7 @@ func New(service PaymentService, readiness ReadinessChecker, internalToken strin
 		readiness:     readiness,
 		internalToken: internalToken,
 		mux:           http.NewServeMux(),
+		routePatterns: make(map[string]struct{}),
 	}
 	handler.routes()
 	return handler
@@ -59,6 +69,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	ctx := context.WithValue(request.Context(), requestIDContextKey{}, requestID)
 	request = request.WithContext(ctx)
+	finish := h.metrics.TrackHTTP(&writer, request, h.routePatterns)
+	defer finish()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			log.Error().Interface("panic", recovered).Str("request_id", requestID).Msg("http handler panic")
@@ -69,13 +81,17 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h *Handler) routes() {
-	h.mux.HandleFunc("GET /health/live", h.liveness)
-	h.mux.HandleFunc("GET /health/ready", h.readinessCheck)
-	h.mux.HandleFunc("POST /v1/payments", h.createPayment)
-	h.mux.HandleFunc("GET /v1/payments/{payment_id}", h.getPayment)
-	h.mux.HandleFunc("GET /v1/accounts/{account_id}", h.getAccount)
-	h.mux.HandleFunc("GET /v1/accounts/{account_id}/transactions", h.listTransactions)
-	h.mux.HandleFunc("POST /internal/v1/payments/{payment_id}/process", h.processPayment)
+	register := func(pattern string, handler http.HandlerFunc) {
+		h.routePatterns[pattern] = struct{}{}
+		h.mux.HandleFunc(pattern, handler)
+	}
+	register("GET /health/live", h.liveness)
+	register("GET /health/ready", h.readinessCheck)
+	register("POST /v1/payments", h.createPayment)
+	register("GET /v1/payments/{payment_id}", h.getPayment)
+	register("GET /v1/accounts/{account_id}", h.getAccount)
+	register("GET /v1/accounts/{account_id}/transactions", h.listTransactions)
+	register("POST /internal/v1/payments/{payment_id}/process", h.processPayment)
 }
 
 func (h *Handler) liveness(writer http.ResponseWriter, _ *http.Request) {

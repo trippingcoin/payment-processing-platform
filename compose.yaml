@@ -103,6 +103,7 @@ services:
       args:
         SERVICE: fraud-service
     environment:
+      METRICS_ADDR: :9090
       FRAUD_DB_DSN: postgres://${FRAUD_POSTGRES_USER:-fraud}:${FRAUD_POSTGRES_PASSWORD:-fraud}@fraud-postgres:5432/${FRAUD_POSTGRES_DB:-fraud}?sslmode=disable
       KAFKA_BROKERS: kafka:9092
       KAFKA_PAYMENTS_TOPIC: ${KAFKA_PAYMENTS_TOPIC:-payments.events.v1}
@@ -115,6 +116,8 @@ services:
       CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
       CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
       CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
+    ports:
+      - "127.0.0.1:${FRAUD_METRICS_PORT:-9092}:9090"
     depends_on:
       fraud-migrate:
         condition: service_completed_successfully
@@ -132,6 +135,7 @@ services:
       args:
         SERVICE: outbox-worker
     environment:
+      METRICS_ADDR: :9090
       DB_DSN: postgres://${FRAUD_POSTGRES_USER:-fraud}:${FRAUD_POSTGRES_PASSWORD:-fraud}@fraud-postgres:5432/${FRAUD_POSTGRES_DB:-fraud}?sslmode=disable
       DB_MAX_OPEN_CONNS: 5
       DB_MIN_IDLE_CONNS: 1
@@ -141,6 +145,8 @@ services:
       OUTBOX_PUBLISH_TIMEOUT: ${OUTBOX_PUBLISH_TIMEOUT:-5s}
       OUTBOX_RETRY_BASE: ${OUTBOX_RETRY_BASE:-1s}
       OUTBOX_RETRY_MAX: ${OUTBOX_RETRY_MAX:-1m}
+    ports:
+      - "127.0.0.1:${FRAUD_OUTBOX_METRICS_PORT:-9094}:9090"
     depends_on:
       fraud-migrate:
         condition: service_completed_successfully
@@ -156,6 +162,7 @@ services:
       args:
         SERVICE: payment-consumer
     environment:
+      METRICS_ADDR: :9090
       DB_DSN: postgres://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}?sslmode=disable
       DB_MAX_OPEN_CONNS: 5
       DB_MIN_IDLE_CONNS: 1
@@ -168,6 +175,8 @@ services:
       CONSUMER_MAX_ATTEMPTS: ${CONSUMER_MAX_ATTEMPTS:-3}
       CONSUMER_RETRY_BASE: ${CONSUMER_RETRY_BASE:-1s}
       CONSUMER_RETRY_MAX: ${CONSUMER_RETRY_MAX:-30s}
+    ports:
+      - "127.0.0.1:${PAYMENT_CONSUMER_METRICS_PORT:-9091}:9090"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -185,6 +194,7 @@ services:
       args:
         SERVICE: outbox-worker
     environment:
+      METRICS_ADDR: :9090
       DB_DSN: postgres://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@postgres:5432/${POSTGRES_DB:-payments}?sslmode=disable
       DB_MAX_OPEN_CONNS: 5
       DB_MIN_IDLE_CONNS: 1
@@ -194,6 +204,8 @@ services:
       OUTBOX_PUBLISH_TIMEOUT: ${OUTBOX_PUBLISH_TIMEOUT:-5s}
       OUTBOX_RETRY_BASE: ${OUTBOX_RETRY_BASE:-1s}
       OUTBOX_RETRY_MAX: ${OUTBOX_RETRY_MAX:-1m}
+    ports:
+      - "127.0.0.1:${OUTBOX_METRICS_PORT:-9093}:9090"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -261,6 +273,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      METRICS_ADDR: :9090
       APP_PORT: 8080
       APP_VERSION: ${APP_VERSION:-v0.1.0}
       ENV: ${ENV:-development}
@@ -272,6 +285,7 @@ services:
       DB_CONN_MAX_IDLE_TIME: ${DB_CONN_MAX_IDLE_TIME:-5m}
     ports:
       - "${APP_PORT:-8080}:8080"
+      - "127.0.0.1:${PAYMENT_METRICS_PORT:-9090}:9090"
     depends_on:
       postgres:
         condition: service_healthy

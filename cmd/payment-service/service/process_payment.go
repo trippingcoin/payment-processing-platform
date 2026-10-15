@@ -67,6 +67,7 @@ func (s *Service) startPaymentProcessing(
 	command ProcessPaymentCommand,
 ) (repo.Payment, error) {
 	var result repo.Payment
+	var changed bool
 	err := s.transactor.WithinTransaction(ctx, func(repository Repository) error {
 		payment, err := repository.GetPaymentForUpdate(ctx, command.PaymentID)
 		if errors.Is(err, repo.ErrNotFound) {
@@ -100,8 +101,12 @@ func (s *Service) startPaymentProcessing(
 			return err
 		}
 		result = processing
+		changed = true
 		return nil
 	})
+	if err == nil && changed {
+		s.observeTransition(result.Status)
+	}
 	return result, err
 }
 
@@ -110,6 +115,7 @@ func (s *Service) completePaymentProcessing(
 	command ProcessPaymentCommand,
 ) (repo.Payment, error) {
 	var result repo.Payment
+	var changed bool
 	err := s.transactor.WithinTransaction(ctx, func(repository Repository) error {
 		payment, err := repository.GetPaymentForUpdate(ctx, command.PaymentID)
 		if errors.Is(err, repo.ErrNotFound) {
@@ -119,8 +125,12 @@ func (s *Service) completePaymentProcessing(
 			return fmt.Errorf("lock processing payment: %w", err)
 		}
 		result, err = s.finishPayment(ctx, repository, payment, command.CorrelationID)
+		changed = err == nil && result.Status != payment.Status
 		return err
 	})
+	if err == nil && changed {
+		s.observeTransition(result.Status)
+	}
 	return result, err
 }
 

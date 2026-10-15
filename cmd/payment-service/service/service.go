@@ -41,6 +41,7 @@ type Service struct {
 	now            func() time.Time
 	newID          func() string
 	idempotencyTTL time.Duration
+	onTransition   func(string)
 }
 
 func New(store *repo.Store, options ...Option) *Service {
@@ -62,6 +63,16 @@ func NewWithDependencies(repository Repository, transactor Transactor, options .
 }
 
 type Option func(*Service)
+
+func WithPaymentObserver(observe func(string)) Option {
+	return func(s *Service) { s.onTransition = observe }
+}
+
+func (s *Service) observeTransition(status repo.PaymentStatus) {
+	if s.onTransition != nil {
+		s.onTransition(string(status))
+	}
+}
 
 func WithClock(now func() time.Time) Option {
 	return func(service *Service) {

@@ -32,6 +32,7 @@ func (s *Service) ApplyFraudDecision(ctx context.Context, c FraudDecisionCommand
 		c.CorrelationID = c.PaymentID
 	}
 	for attempt := 0; attempt < maxProcessAttempts; attempt++ {
+		var transitions []repo.PaymentStatus
 		err := s.transactor.WithinTransaction(ctx, func(r Repository) error {
 			fresh, err := r.TryBeginInboxEvent(ctx, "payment-fraud-decisions", c.EventID, s.now().UTC())
 			if err != nil || !fresh {
@@ -66,6 +67,7 @@ func (s *Service) ApplyFraudDecision(ctx context.Context, c FraudDecisionCommand
 				if err != nil {
 					return err
 				}
+				transitions = append(transitions, p.Status)
 				return s.appendPaymentStatusEvent(ctx, r, p, c.CorrelationID)
 			}
 			if p.Status == repo.PaymentPending {
@@ -76,10 +78,19 @@ func (s *Service) ApplyFraudDecision(ctx context.Context, c FraudDecisionCommand
 				if err = s.appendPaymentStatusEvent(ctx, r, p, c.CorrelationID); err != nil {
 					return err
 				}
+				transitions = append(transitions, p.Status)
 			}
-			_, err = s.finishPayment(ctx, r, p, c.CorrelationID)
+			p, err = s.finishPayment(ctx, r, p, c.CorrelationID)
+			if err == nil {
+				transitions = append(transitions, p.Status)
+			}
 			return err
 		})
+		if err == nil {
+			for _, status := range transitions {
+				s.observeTransition(status)
+			}
+		}
 		if !errors.Is(err, repo.ErrOptimisticLock) {
 			return err
 		}

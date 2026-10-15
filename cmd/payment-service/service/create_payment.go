@@ -177,6 +177,9 @@ func (s *Service) CreatePayment(ctx context.Context, command CreatePaymentComman
 	if err != nil {
 		return CreatePaymentResult{}, err
 	}
+	if !result.Replayed {
+		s.observeTransition(repo.PaymentPending)
+	}
 	return result, nil
 }
 

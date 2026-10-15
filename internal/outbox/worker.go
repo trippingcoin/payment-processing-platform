@@ -35,13 +35,23 @@ type Worker struct {
 	tx        Transact
 	publisher Publisher
 	cfg       Config
+	observer  Observer
 }
 
-func New(tx Transact, publisher Publisher, cfg Config) (*Worker, error) {
+type Observer interface {
+	OutboxPublish(error, time.Duration)
+	OutboxTransaction(string)
+}
+
+func New(tx Transact, publisher Publisher, cfg Config, observers ...Observer) (*Worker, error) {
 	if tx == nil || publisher == nil || cfg.PollInterval <= 0 || cfg.PublishTimeout <= 0 || cfg.RetryBase <= 0 || cfg.RetryMax < cfg.RetryBase {
 		return nil, errors.New("invalid outbox configuration")
 	}
-	return &Worker{tx: tx, publisher: publisher, cfg: cfg}, nil
+	w := &Worker{tx: tx, publisher: publisher, cfg: cfg}
+	if len(observers) > 0 {
+		w.observer = observers[0]
+	}
+	return w, nil
 }
 
 func PostgresTransactions(store *repo.Store) Transact {
@@ -69,8 +79,12 @@ func (w *Worker) Once(ctx context.Context) (bool, error) {
 		}
 		found = true
 		publishCtx, stop := context.WithTimeout(txCtx, w.cfg.PublishTimeout)
+		started := time.Now()
 		publishErr = w.publisher.Publish(publishCtx, event)
 		stop()
+		if w.observer != nil {
+			w.observer.OutboxPublish(publishErr, time.Since(started))
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -79,6 +93,16 @@ func (w *Worker) Once(ctx context.Context) (bool, error) {
 		}
 		return q.MarkOutboxPublished(txCtx, event.ID, time.Now().UTC())
 	})
+	if w.observer != nil {
+		switch {
+		case err != nil:
+			w.observer.OutboxTransaction("error")
+		case found && publishErr != nil:
+			w.observer.OutboxTransaction("retry_scheduled")
+		case found:
+			w.observer.OutboxTransaction("published")
+		}
+	}
 	if err != nil {
 		return found, fmt.Errorf("outbox transaction: %w", err)
 	}

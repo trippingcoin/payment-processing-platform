@@ -12,6 +12,16 @@ const outboxColumns = `
 	id, aggregate_type, aggregate_id, event_type, payload, headers,
 	attempts, last_error, created_at, published_at`
 
+// OutboxStats includes delayed retries and uses one snapshot without row locks.
+func (q *Queries) OutboxStats(ctx context.Context) (int64, float64, error) {
+	var pending int64
+	var age float64
+	err := q.db.QueryRow(ctx, `SELECT count(*),
+		COALESCE(GREATEST(0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - min(created_at)))), 0)::double precision
+		FROM outbox_events WHERE published_at IS NULL`).Scan(&pending, &age)
+	return pending, age, err
+}
+
 func (q *Queries) AppendOutboxEvent(ctx context.Context, event OutboxEvent) (OutboxEvent, error) {
 	const statement = `
 		INSERT INTO outbox_events (

@@ -12,6 +12,7 @@ import (
 	"triple-p/cmd/payment-service/repo"
 	"triple-p/cmd/payment-service/service"
 	"triple-p/config"
+	"triple-p/internal/telemetry"
 	"triple-p/utils/env"
 
 	"github.com/rs/zerolog"
@@ -40,8 +41,9 @@ func run() error {
 	}
 	defer store.Close()
 
-	paymentService := service.New(store)
-	handler := httpapi.New(paymentService, store, cfg.InternalToken)
+	metrics := telemetry.New()
+	paymentService := service.New(store, service.WithPaymentObserver(metrics.PaymentTransition))
+	handler := httpapi.New(paymentService, store, cfg.InternalToken).WithMetrics(metrics)
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           handler,
@@ -51,26 +53,28 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	serverError := make(chan error, 1)
-	go func() {
-		log.Info().Int("port", cfg.Port).Str("version", cfg.Version).Msg("payment service started")
-		serverError <- server.ListenAndServe()
-	}()
+	return telemetry.Serve(ctx, cfg.Metrics.Addr, metrics.Handler(), func(ctx context.Context) error {
+		serverError := make(chan error, 1)
+		go func() {
+			log.Info().Int("port", cfg.Port).Str("version", cfg.Version).Msg("payment service started")
+			serverError <- server.ListenAndServe()
+		}()
 
-	select {
-	case <-ctx.Done():
-	case err := <-serverError:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve HTTP: %w", err)
+		select {
+		case <-ctx.Done():
+		case err := <-serverError:
+			if !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("serve HTTP: %w", err)
+			}
+			return nil
+		}
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("shutdown HTTP server: %w", err)
 		}
 		return nil
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
-		return fmt.Errorf("shutdown HTTP server: %w", err)
-	}
-	return nil
+	})
 }

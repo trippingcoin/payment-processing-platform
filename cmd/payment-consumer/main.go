@@ -16,6 +16,7 @@ import (
 	"triple-p/config"
 	"triple-p/internal/eventconsumer"
 	"triple-p/internal/paymentconsumer"
+	"triple-p/internal/telemetry"
 	"triple-p/utils/env"
 )
 
@@ -66,7 +67,11 @@ func run() error {
 		StartOffset: kafka.FirstOffset, CommitInterval: 0, MinBytes: 1, MaxBytes: 10e6, MaxWait: time.Second})
 	defer reader.Close()
 	log.Info().Str("topic", cfg.Topic).Str("group", cfg.Group).Msg("payment consumer started")
-	err = eventconsumer.ConsumeWithDLQ(ctx, reader, paymentconsumer.Handler{Payments: service.New(store)}, cfg.Timeout, cfg.Retry, eventconsumer.DeadLetterSink{Publisher: dlq, ConsumerGroup: cfg.Group, Timeout: cfg.DLQTimeout})
+	metrics := telemetry.New()
+	payments := service.New(store, service.WithPaymentObserver(metrics.PaymentTransition))
+	err = telemetry.Serve(ctx, cfg.Metrics.Addr, metrics.Handler(), func(ctx context.Context) error {
+		return eventconsumer.ConsumeWithDLQ(ctx, reader, paymentconsumer.Handler{Payments: payments}, cfg.Timeout, cfg.Retry, eventconsumer.DeadLetterSink{Publisher: dlq, ConsumerGroup: cfg.Group, Timeout: cfg.DLQTimeout}, metrics)
+	})
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return nil
 	}

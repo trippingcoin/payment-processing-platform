@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: Internal Metrics API
+  version: 1.0.0
+  description: |
+    Read-only Prometheus exposition on a separate operational listener.
+    METRICS_ADDR defaults to 127.0.0.1:9090 for local processes; use distinct
+    addresses when running several processes locally. Compose uses :9090 in
+    each container and loopback-only host ports listed below. No authentication:
+    never expose this listener through the public gateway or ingress.
+    Counters reset on restart and are operational signals, not a financial audit.
+    No IDs, raw URLs, payloads or error strings are metric labels.
+servers:
+  - url: http://127.0.0.1:9090
+    description: payment-service
+  - url: http://127.0.0.1:9091
+    description: payment-consumer
+  - url: http://127.0.0.1:9092
+    description: fraud-service
+  - url: http://127.0.0.1:9093
+    description: outbox-worker
+  - url: http://127.0.0.1:9094
+    description: fraud-outbox-worker
+paths:
+  /metrics:
+    get:
+      operationId: scrapeMetrics
+      summary: Read process metrics
+      description: |
+        ppp_http_requests_total{method,route,status} and
+        ppp_http_request_duration_seconds{method,route}: route templates only;
+        unknown routes/methods use bounded fallback labels.
+        ppp_payment_transitions_total{status}: pending/processing/completed/failed
+        transitions observed after successful database commit. Replays and
+        rollbacks do not increment it; a crash after commit can undercount it.
+        ppp_consumer_attempts_total{stage,result},
+        ppp_consumer_attempt_duration_seconds{stage},
+        ppp_consumer_retries_total{stage}: stages fetch/handle/dlq/commit;
+        retries count additional attempts actually started, not planned delays.
+        Result is success/transient/permanent/canceled/unknown.
+        ppp_consumer_dlq_published_total: acknowledged DLQ publications,
+        not distinct event IDs. Redelivery may increment it again.
+        ppp_outbox_publish_attempts_total{result} and
+        ppp_outbox_publish_duration_seconds: broker publication attempts.
+        ppp_outbox_transactions_total{result}: published/retry_scheduled/error;
+        only confirmed commits count as published or retry_scheduled.
+        ppp_outbox_pending_events, ppp_outbox_oldest_pending_age_seconds:
+        all unpublished records, including delayed retries, queried on scrape
+        with a two-second deadline. Empty queue yields zero. On DB failure both
+        gauges are omitted and ppp_outbox_scrape_success is zero (HTTP remains
+        200); do not interpret missing gauges as an empty queue. These gauges
+        exist only on workers and describe the entire backing Outbox database;
+        do not sum them across replicas of the same worker/database.
+        Consumer fetch duration includes idle waiting; it is not processing latency.
+        Go runtime and process metrics are also included. Scrapes are not counted
+        as application HTTP requests. These metrics do not measure Kafka lag.
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: Concurrent scrape limit reached
+        "500":
+          description: Metrics gathering failed
